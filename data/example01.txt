@@ -1,0 +1,5 @@
+A dog is a class. He has mood = "HAPPY".
+A dog has a "speed".
+
+A cat is a class.
+She has mood = "ANGRY".
