@@ -74,7 +74,7 @@ class Transpiler:
         ... in numbersSteps, his mood is "MOVING", his energy decreases by 1, end. To Bark
         ... he print "barf barf", his energy decreases by 1, his mood is
         ... "BARKING", end. To Lay he used print "relax", he used print "move the
-        ... Booty", his energy increases in 3, end. To Check he print "mood: " +
+        ... Booty", his energy increases in 3", end. To Check he print "mood: " +
         ... self.mood, he print "energy: " + str(self.energy), he print "Position" +
         ... str(self.coordinatePosition), end.
         ... """
@@ -313,39 +313,39 @@ class Transpiler:
             y = 0
         <BLANKLINE>
             def bark(self):
-                print(`` barf '')
+                print(" barf ")
                 self.energy -= 1
-                self.mood = '' barking ''
+                self.mood = " barking "
         <BLANKLINE>
             def run(self):
                 self.moveforward ( 2 )
                 self.energy -= 1
-                self.mood = `` play ''
+                self.mood = " play "
                 return 0
         <BLANKLINE>
             def moveleft(self, numberssteps):
                 self.x -= numberssteps
-                self.mood = `` moving ''
+                self.mood = " moving "
                 self.energy -= 1
         <BLANKLINE>
             def moveright(self, numberssteps):
                 self.x += numberssteps
-                self.mood = `` moving ''
+                self.mood = " moving "
                 self.energy -= 1
         <BLANKLINE>
             def moveforward(self, numberssteps):
                 self.y += numberssteps
-                self.mood = `` moving ''
+                self.mood = " moving "
                 self.energy -= 1
         <BLANKLINE>
             def lay(self):
-                print(`` relax '')
-                print(`` move the booty '')
+                print(" relax ")
+                print(" move the booty ")
                 self.energy += 3
         <BLANKLINE>
             def check(self):
-                print(`` mood : `` + self.mood)
-                print(`` energy : `` + str ( self.energy ))
+                print(" mood : " + self.mood)
+                print(" energy : " + str ( self.energy ))
         <BLANKLINE>
         <BLANKLINE>
         '''
@@ -419,7 +419,7 @@ class Transpiler:
         >>> transpiler.tokenize_words('a dog is a class.')
         ['a', 'dog', 'is', 'a', 'class', '.']
         '''
-        return nltk.word_tokenize(string)
+        return [ '"' if w in ('``', '\'\'') else w for w in nltk.word_tokenize(string) ] 
     
     def part_of_speech_tag(self, tokens):
         '''Returns a list of (word, tag) tuples for each word in tokens.
@@ -441,3 +441,12 @@ class Transpiler:
         [('a', 'DT'), ('dog', 'NN'), ('is', 'VBZ'), ('a', 'DT'), ('class', 'NN')]
         '''
         return nltk.pos_tag(tokens)
+    def transpile(self, text):
+        code = ''
+        separated_paragraphs = self.split_paragraphs(text)   
+    
+        for paragraph in separated_paragraphs:
+            class_metadata = self.parse_class_paragraph(paragraph)
+            code += self.produce_class_code(class_metadata)
+    
+        return code

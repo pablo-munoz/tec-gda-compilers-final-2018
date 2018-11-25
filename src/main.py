@@ -19,6 +19,11 @@ if __name__ == '__main__':
     argument_parser.add_argument(
         '-i', '--input', type=str,
         help='Path to text file with program description in natural language')
+    argument_parser.add_argument(
+        '-o', '--output', type=str,
+        help='Path of text file to write generated code',
+        required=False, default=None
+    )
 
     args = argument_parser.parse_args(sys.argv[1:])
 
@@ -29,4 +34,10 @@ if __name__ == '__main__':
         text = fhandle.read()
 
     transpiler = Transpiler()
-    transpiler.transpile(text)
+    code = transpiler.transpile(text)
+
+    if args.output:
+        with open(args.output, 'w') as fhandle:
+            fhandle.write(code)
+    else:
+        print(code)

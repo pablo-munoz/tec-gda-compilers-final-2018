@@ -1,23 +1,108 @@
 #+TITLE: Natural language text to python code transpiler
+#+AUTHOR: Pablo Munoz A01222422, Francisco Castellanos A01261268
 #+LATEX_HEADER: \usepackage[margin=0.5in]{geometry}
 
+* Introduction
+Natural languages are unlike programming languages due to the fact
+that they cannot be easily characterized with rules. In addition,
+natural languages contain a lot of ambiguity and nuance. However, us
+humans have been using natural language to communicate and convey
+meaning and emotions very effectively for thousands of years. Wouldn't
+it be nice if we could just talk as we talk to another person and have
+a computer understand us and do what we tell it? This text documents a
+python program that does a very simple version of that, it converts
+human text (with some restrictions) into code for python classes. The
+problem turned out to be much tougher than we originally thought, and
+we never thought it would be easy. So while the program might not be
+anything noteworthy, it does shed some light into the difficulties
+that any engineer will face when making a bridge between natural and
+computer languages.
 
-* Requirements
+* Limitations
 1. Every paragraph will be a new class. And if in the source file
-   contains the same paragraph there would be two identical classes,
-   this would ont be an error.
-2. 
-3. Class properties must be declared together in a sentence after the
-   class declaration sentence, separated by commas
-4. Method definition sentences must end with the tokens: =, end.=
-5. We only support methods with 0 or 1 parameters.
-6. No commas in string values
+   contains the same paragraph there would be two identical classes.
+2. Class properties must be declared together in a sentence after the
+   class declaration sentence, separated by commas. The sentence must
+   begin with a pronoun and then the word "can".
+3. We discovered that it was really difficult to determine where a
+   sentence ends. Initially we relied on periods, however, periods may
+   appear between numbers or in property accessing expressions like
+   =self.var=. So we now require that method definition sentences must
+   end with the tokens: =, end.=
+4. We only support methods with 0 or 1 parameters.
+5. We do not support literal strings in the program with commas inside
+   of them, for example "bark, bark" would lead to an incorrect
+   output, the string must be "bark bark".
+6. Our transpiler does not check the validity of the program, so
+   referencing a variable that is not declared or other errors of the
+   sort will go through.
+7. Only class attributes can be assigned in the function bodies (no
+   globals).
+8. The function bodies can only be composed of the actions:
+   - Increase a class attribute
+   - Decrease a class attribute
+   - Set a class attribute to some expression
+   - Print some expression
+   - Return something
+9. The attribute declaration/initialization sentence must end with a
+   period, and if the last value to initialize is a number, a space
+   must lie between the number and the period.
+10. The program will transform all attribute and method names to
+    lowercase, except for the class name which will have the first
+    letter capitalized. This does not affect the correctness of the
+    program unless you were having identically named attributes or
+    methods but with different casing.
+11. The process of producing code insert spaces between "tokens". This
+    does not affect the correctness of the program as =call(x, y)= is
+    the same as =call ( x , y )= to the interpreter. However, strings
+    are affected as there will be an extra space after the first
+    string quote and before the last string quote.
+    
+* Anatomy of a valid input
+The range of valid inputs that our program can parse turns out to be quite
+limit as they must follow a particular structure.
+
+As mentioned before each class must be defined in one paragraph and
+one paragraph can only define one class. The first sentence of the
+paragraph will indicate the class name. The first sentence must end
+with =is/are/am a class=. The class name will be taken to be the noun
+closest to the word =class=.
+
+After the class definition sentence, there must be an attribute
+definition sentence with the form =<pronoun> has <attr> =
+<value>=. The attributes and their values must be separated by commas
+and if the last value is a number, there must be a space between it
+and the following period.
+
+After the attributes definition sentence, there is the attribute
+declaration sentence, which must have structure =<pronoun> can
+<method-1-name>, <method-2-name>, ..., and <method-n-name>=.
+
+After the method declaration sentence, there must be one sentence per
+method (which will define it). The rest of the paragraph must consist
+only of the method definition sentences. All method definition
+sentences must begin with =To <method name>=. If the method accepts an
+argument this must be followed by a =<pronoun> need(s) <arg name>=,
+then we will have each of the actions that the method will take,
+separated by commas and culiminating in a =, end.=. The actions can
+be the following:
+
+To increase an attribute: =<pronoun> <attr name> increase(s) in/by <amount>=
+To decrease an attribute: =<pronoun> <attr name> decrease(s) in/by <amount>=
+To print something: =<pronoun> print(s) <value>=
+To set an attribute: =<pronoun> <attr name> is <value>=
+To return something: =return <value>=
 
 * Code
 ** The =main= program
 Our main program will consist of a command line interface that takes
 as input the path to a text file containing natural language and
-outputs the program constructed from it to stdout.
+outputs the program constructed from it to stdout. The program accepts
+two flags, =-i= or =--input= whose value must be equal to the input
+file with natural language, this flab is required. You can also give
+the =-o= or =--output= whose value is a path where the resulting
+python program will be written to; if you omit this flag, the code
+will simply be send to stdout.
 
 #+BEGIN_SRC python :tangle src/main.py
 import sys
@@ -41,6 +126,11 @@ if __name__ == '__main__':
     argument_parser.add_argument(
         '-i', '--input', type=str,
         help='Path to text file with program description in natural language')
+    argument_parser.add_argument(
+        '-o', '--output', type=str,
+        help='Path of text file to write generated code',
+        required=False, default=None
+    )
 
     args = argument_parser.parse_args(sys.argv[1:])
 
@@ -51,7 +141,13 @@ if __name__ == '__main__':
         text = fhandle.read()
 
     transpiler = Transpiler()
-    transpiler.transpile(text)
+    code = transpiler.transpile(text)
+
+    if args.output:
+        with open(args.output, 'w') as fhandle:
+            fhandle.write(code)
+    else:
+        print(code)
 #+END_SRC
 
 ** =class Transpiler=
@@ -92,6 +188,7 @@ class Transpiler:
     <<produce_class_code>>
     <<tokenize_words>>
     <<part_of_speech_tag>>
+    <<transpile>>
 #+END_SRC
 
 *** =split_paragraphs(self, text)=
@@ -132,7 +229,7 @@ def split_paragraphs(self, text):
 
 #+END_SRC
 
-*** COMMENT =parse_class_paragraph(self, paragraph)=
+*** =parse_class_paragraph(self, paragraph)=
 This method takes a paragraph of the natural language program as a
 string and parses it. By parsing we mean it is transformed into
 an internal representation (a dictionary in this case), that other
@@ -141,7 +238,7 @@ of this system, the =paragraph= will always be a string that has
 been generated by the =split_paragraphs= method.
 
 The process of how we parse a paragraph string into its internal
-dictionary representation can be split into TODO steps:
+dictionary representation can be split into steps:
 
 1. Lowercase paragraph
 1. Tokenizing words
@@ -173,7 +270,7 @@ def parse_class_paragraph(self, paragraph):
     ... in numbersSteps, his mood is "MOVING", his energy decreases by 1, end. To Bark
     ... he print "barf barf", his energy decreases by 1, his mood is
     ... "BARKING", end. To Lay he used print "relax", he used print "move the
-    ... Booty", his energy increases in 3, end. To Check he print "mood: " +
+    ... Booty", his energy increases in 3", end. To Check he print "mood: " +
     ... self.mood, he print "energy: " + str(self.energy), he print "Position" +
     ... str(self.coordinatePosition), end.
     ... """
@@ -445,7 +542,7 @@ def tokenize_words(self, string):
     >>> transpiler.tokenize_words('a dog is a class.')
     ['a', 'dog', 'is', 'a', 'class', '.']
     '''
-    return nltk.word_tokenize(string)
+    return [ '"' if w in ('``', '\'\'') else w for w in nltk.word_tokenize(string) ] 
 
 #+END_SRC
 
@@ -474,7 +571,7 @@ def part_of_speech_tag(self, tokens):
     return nltk.pos_tag(tokens)
 #+END_SRC
 
-*** COMMENT =produce_class_code(self, class_metadata)=
+*** =produce_class_code(self, class_metadata)=
 This method produces the code for a class represented by a dictionary
 of class attributes and methods given as the =class_metadata=
 parameter.
@@ -515,39 +612,39 @@ def produce_class_code(self, class_metadata):
         y = 0
     <BLANKLINE>
         def bark(self):
-            print(`` barf '')
+            print(" barf ")
             self.energy -= 1
-            self.mood = '' barking ''
+            self.mood = " barking "
     <BLANKLINE>
         def run(self):
             self.moveforward ( 2 )
             self.energy -= 1
-            self.mood = `` play ''
+            self.mood = " play "
             return 0
     <BLANKLINE>
         def moveleft(self, numberssteps):
             self.x -= numberssteps
-            self.mood = `` moving ''
+            self.mood = " moving "
             self.energy -= 1
     <BLANKLINE>
         def moveright(self, numberssteps):
             self.x += numberssteps
-            self.mood = `` moving ''
+            self.mood = " moving "
             self.energy -= 1
     <BLANKLINE>
         def moveforward(self, numberssteps):
             self.y += numberssteps
-            self.mood = `` moving ''
+            self.mood = " moving "
             self.energy -= 1
     <BLANKLINE>
         def lay(self):
-            print(`` relax '')
-            print(`` move the booty '')
+            print(" relax ")
+            print(" move the booty ")
             self.energy += 3
     <BLANKLINE>
         def check(self):
-            print(`` mood : `` + self.mood)
-            print(`` energy : `` + str ( self.energy ))
+            print(" mood : " + self.mood)
+            print(" energy : " + str ( self.energy ))
     <BLANKLINE>
     <BLANKLINE>
     '''
@@ -611,8 +708,172 @@ def produce_class_code(self, class_metadata):
 
 #+END_SRC
 
+*** =transpile(text)=
+#+NAME: transpile
+#+BEGIN_SRC python
+def transpile(self, text):
+    code = ''
+    separated_paragraphs = self.split_paragraphs(text)   
+
+    for paragraph in separated_paragraphs:
+        class_metadata = self.parse_class_paragraph(paragraph)
+        code += self.produce_class_code(class_metadata)
+
+    return code
+#+END_SRC
+* Example
+This document is acompannied by a file =example01.txt= in the =data/=
+directory. For reference the example looks like this:
+
+#+BEGIN_EXAMPLE
+A dog is a Class.
+He has mood = "HAPPY", energy = 100, x = 0, y = 0 .
+He can Bark, Run, MoveLeft, MoveRight, MoveForward, Lay and
+Check.
+To Run he used MoveForward(2), his energy decreases in 1,
+mood is "PLAY" and return 0, end.
+To MoveForward he needs numbersSteps, his y increases in
+his mood is "MOVING", his energy decreases by 1, end.
+To MoveLeft he needs numbersSteps, his x decreases in
+his mood is "MOVING", his energy decreases by 1, end.
+To MoveRight he needs numbersSteps, his x increases in numbersSteps,
+mood is "MOVING", his energy decreases by 1, end.
+To Bark he print "barf", his energy decreases in 1, his mood is
+end.
+To Lay he print "relax", he print "move the
+his energy increases in 3, end.
+To Check he print "mood: " + self.mood, he print "energy: " +
+print "Position" + str(self.coordinatePosition), end.
+
+A pack is a class.
+They have mood = "HAPPY", energy = 1000, members = 10 .
+They can play, sleep, join and separate.
+To play they need duration, their energy decreases by 10, their mood is "PLAYING", end.
+To sleep they need duration, their energy increases by 20, their mood is "SLEEPING", end.
+To join they need numMembers, their members increase by numMembers, they print str(numMembers) + " joined the pack", end.
+To separate they need numMembers, their members decrease by numMmembers, they print str(numMembers) + " left the pack", end.
+#+END_EXAMPLE
+
+The above natural language can be converted into python code by our
+program by executing the following in your shell:
+
+#+BEGIN_SRC shell
+python src/main.py -i data/example01.txt
+#+END_SRC
+
+which outputs the following:
+
+#+BEGIN_SRC python
+class Dog:
+    mood = "happy"
+    energy = 100
+    x = 0
+    y = 0
+
+    def bark(self):
+        print(" barf ")
+        self.energy -= 1
+
+    def run(self):
+        self.moveforward ( 2 )
+        self.energy -= 1
+        return 0
+
+    def moveleft(self, numberssteps):
+        self.x -= his mood is " moving "
+        self.energy -= 1
+
+    def moveright(self, numberssteps):
+        self.x += numberssteps
+        self.energy -= 1
+
+    def moveforward(self, numberssteps):
+        self.y += his mood is " moving "
+        self.energy -= 1
+
+    def lay(self):
+        print(" relax ")
+        print(" move the his energy increases in 3")
+
+    def check(self):
+        print(" mood : " + self.mood)
+        print(" energy : " + print " position " + str ( self.coordinateposition ))
+
+class Pack:
+    mood = "happy"
+    energy = 1000
+    members = 10
+
+    def play(self, duration):
+        self.energy -= 10
+        self.mood = " playing "
+
+    def sleep(self, duration):
+        self.energy += 20
+        self.mood = " sleeping "
+
+    def join(self, nummembers):
+        self.members += nummembers
+        print(str ( nummembers ) + " joined the pack ")
+
+    def separate(self, nummembers):
+        self.members -= nummmembers
+        print(str ( nummembers ) + " left the pack ")
+#+END_SRC
+* Testing
+The code presented contains many unit tests which you can run by
+executing the following command:
+
+#+BEGIN_SRC shell
+python -m doctest src/main.py src/transpiler.py
+#+END_SRC
+
+or 
+
+#+BEGIN_SRC shell
+python -m doctest -v src/main.py src/transpiler.py
+#+END_SRC
+
+if you want a more verbose output.
+
 * Lessons learned
+** Stemming is your friend
+We found stemming really useful, particularly for having our program
+accept the singular and plural version of words. For example, in a
+method declaration sentence you can order to increase some attribute
+by some quantity. But in our natural language the way you express this
+will differ depending on whether the class is a "singular" o a
+"plural". So to our program it is the same that you say =His energy
+increases by 1= or =Their memebers increase by 10=. Even though we
+have the word increase with and without a final =s=, the meaning is
+still the same, there is some quantity that must be increased.
+
 ** Delimiting is hard
+In the beginning we attempted to use periods as the delimiters of
+sentences. This turned out to be very fragile because periods appear
+with other purposes in human text (this goes back to the ambiguities)
+of human languages. For example, a number could have a period like in
+=1.3=, or the human could say something like =print self.id=, and we
+find ourselves with another period that is not the end of a
+sentence. To overcome this we had to add another restriction to the
+inputs our program accepts at the cost of its utility and
+generality. We now require that each sentence in the method definition
+sections of a paragraph end with the word tokens =, end.=
 
 ** Can't rely just on noun/verbs
-Things like moveLeft are not identified as a verb
+Since we are using NLTK, and its tagging capabilities allow us to
+determine if a word is a noun or a verb, we originally had the idea to
+look at all the verbs and take them to be methods, and look at all the
+nouns and have them be classnames if they appear in the first,
+sentence of the paragraph or attributes if they appear later. However,
+this proved to not be very effective due to the fact that when
+programming we often name methods something like =moveLeft=, and while
+=move= is correctly identified as a verb by =nltk=, =moveLeft= is not.
+** It's very hard to not rely on position
+It turns out to be very hard to extract meaning from a human text and
+structure it, so we ended up relying a lot in the position of words,
+for example we expect that the first word of a method definition
+sentence to be =To=. While this simplifies our job it restricts the
+universe of human texts that our program can parse, so while =To
+run...= would have the same meaning as =In order to run...= the latter
+would not work for our system.
