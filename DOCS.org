@@ -9,6 +9,9 @@
 2. 
 3. Class properties must be declared together in a sentence after the
    class declaration sentence, separated by commas
+4. Method definition sentences must end with the tokens: =, end.=
+5. We only support methods with 0 or 1 parameters.
+6. No commas in string values
 
 * Code
 ** The =main= program
@@ -59,6 +62,8 @@ converting it into code *transpilation*.
 #+BEGIN_SRC python :tangle src/transpiler.py :noweb yes :exports none
 import re
 import logging
+import string
+import math
 import nltk
 
 logger = logging.getLogger(__file__)
@@ -127,7 +132,7 @@ def split_paragraphs(self, text):
 
 #+END_SRC
 
-*** =parse_class_paragraph(self, paragraph)=
+*** COMMENT =parse_class_paragraph(self, paragraph)=
 This method takes a paragraph of the natural language program as a
 string and parses it. By parsing we mean it is transformed into
 an internal representation (a dictionary in this case), that other
@@ -156,28 +161,30 @@ def parse_class_paragraph(self, paragraph):
     
     Usage:
     >>> paragraph = """
-    ... A dog is a Class. He has mood = “HAPPY”, energy = 100,
-    ... coordenatePosition = (0,0). He can Bark, Run, MoveLeft, MoveRight,
+    ... A dog is a Class. He has mood = "HAPPY", energy = 100,
+    ... x = 0, y = 0 . He can Bark, Run, MoveLeft, MoveRight,
     ... MoveForward, Lay and Check. To Run he used MoveForward(2), his energy
-    ... decreases in 1, his mood is “PLAY” and return 0. To MoveForward he
-    ... needs numbersSteps, his coordinatePosition[0] increases in
-    ... numbersSteps, his mood is “MOVING”, decreases energy by 1. To MoveLeft
-    ... he needs numbersSteps, his coordinatePosition[1] decreases in
-    ... numbersSteps, his mood is “MOVING”, decreases energy by 1. To
-    ... MoveRight he needs numbersSteps, his coordinatePosition[1] increases
-    ... in numbersSteps, his mood is “MOVING”, decreases energy by 1. To Bark
-    ... he print “barf, barf”, his energy decreases in 1, his mood is
-    ... “BARKING”. To Lay he used print “relax”, he used print “move the
-    ... Booty”, his energy increases in 3. To Check he print “mood: ” +
-    ... self.mood, he print “energy: “ + str(self.energy), print “Position” +
-    ... str(self.coordinatePosition)
+    ... decreases in 1, his mood is "PLAY" and return 0, end. To MoveForward he
+    ... needs numbersSteps, his y increases in
+    ... numbersSteps, his mood is "MOVING", his energy decreases by 1, end. To MoveLeft
+    ... he needs numbersSteps, his x decreases in
+    ... numbersSteps, his mood is "MOVING", his energy decreases by 1, end. To
+    ... MoveRight he needs numbersSteps, his x increases
+    ... in numbersSteps, his mood is "MOVING", his energy decreases by 1, end. To Bark
+    ... he print "barf barf", his energy decreases by 1, his mood is
+    ... "BARKING", end. To Lay he used print "relax", he used print "move the
+    ... Booty", his energy increases in 3, end. To Check he print "mood: " +
+    ... self.mood, he print "energy: " + str(self.energy), he print "Position" +
+    ... str(self.coordinatePosition), end.
     ... """
     >>> transpiler = Transpiler()
     >>> class_metadata = transpiler.parse_class_paragraph(paragraph)
     >>> class_metadata['class_name']
     'dog'
     >>> class_metadata['property_names_and_defaults']
-    [('mood', '“happy”'), ('energy', '100'), ('coordenateposition', '(0,0)')]
+    [('mood', '"happy"'), ('energy', '100'), ('x', '0'), ('y', '0')]
+    >>> class_metadata['method_names']
+    ['bark', 'run', 'moveleft', 'moveright', 'moveforward', 'lay', 'check']
     '''
     # 1. Lowercase paragraph
     lowercase_paragraph = paragraph.lower()
@@ -192,11 +199,17 @@ def parse_class_paragraph(self, paragraph):
     property_names_and_defaults = []
     <<parse_property_names_and_defaults>>
 
-    # TODO parse methods
+    method_names = []
+    method_params = {}
+    method_actions = {}
+    <<parse_methods>>
 
     return dict(
         class_name=class_name,
-        property_names_and_defaults=property_names_and_defaults
+        property_names_and_defaults=property_names_and_defaults,
+        method_names=method_names,
+        method_params=method_params,
+        method_actions=method_actions
     )
 
 #+END_SRC
@@ -260,14 +273,160 @@ while True:
             i += 1
             next_word = word_tokens[j + i]
 
+        # Something weird happens where string value, i.e. with double quotes
+        # are parsed as beginning with 2 of this symbol: '`'. If that is the
+        # case, coerce to using the double quote.
+        value_with_funny_double_quote = property_default_value[0] == '`'
+        if value_with_funny_double_quote:
+            property_default_value = '"{}"'.format(property_default_value[2:-2])
+
         property_names_and_defaults.append((property_name, property_default_value))
 
         i -= 1
 
     else:
         i += 1
+
+    index_of_last_word_second_sentence = j + i
 #+END_SRC
 
+Parsing the methods is perhaps the most complex task of the
+program. We leverage the fact that we have constrained the system so
+that the methods always come after the class name declarations and
+the class attributes and default values declarations. The methods are
+first all declared together in one sentence of the form
+
+#+BEGIN_SRC example
+<pronoun> can <method-names>*
+#+END_SRC
+
+For example
+
+#+BEGIN_EXAMPLE
+He can Run, Hide, Play, Eat.
+#+END_EXAMPLE
+
+#+NAME: parse_methods
+#+BEGIN_SRC python
+# Step 1. Parse the method names.
+index_of_first_word_third_sentence = index_of_last_word_second_sentence + 1
+j = index_of_first_word_third_sentence
+
+# Skip two tokens (pronoun and can)
+j += 2
+
+i = 0
+
+while True:
+    token = word_tokens[j+i]
+    if token == '.':
+        break
+
+    if token not in (',', 'and'):
+        method_names.append(token)
+
+    i += 1
+
+# Step 2. Parse the method arguments
+# Each method has its arguments and actions defined in a single
+# sentence that must appear after the method names declaration
+# sentence.
+# From this point on, all remaining tokens will be method definition
+# tokens, and then the paragraph must end.
+method_definition_tokens = word_tokens[j+i+1:]
+method_definition_sentences = []
+
+beginning_of_sentence = 0
+end_of_sentence = method_definition_tokens.index('end', beginning_of_sentence)
+while end_of_sentence > 0:
+    method_definition_sentences.append(method_definition_tokens[
+        beginning_of_sentence:end_of_sentence-1])
+    beginning_of_sentence = end_of_sentence + 2
+    
+    try:
+        end_of_sentence = method_definition_tokens.index('end', beginning_of_sentence)
+    except ValueError:
+        break
+
+for sentence in method_definition_sentences:
+    # sentence[0] must be the word "To", so we start
+    # at 1 to look for the method name
+    i = 1
+    method_name = sentence[i]
+
+    # Check if the method has a parameter
+    method_has_param = 'need' in sentence[i+2]
+    if method_has_param:
+        param_name = sentence[i+3]
+
+        method_params[method_name] = param_name
+
+        i += 4
+
+    actions = []
+
+    j = i + 1
+    while True:
+        next_comma = math.inf
+        try:
+            next_comma = sentence.index(',', j)
+        except ValueError:
+            pass
+
+        next_and = math.inf
+        try:
+            next_and = sentence.index('and', j)
+        except ValueError:
+            pass
+
+        action_end = min(next_comma, next_and)
+        if action_end == math.inf:
+            action_end = None
+
+        next_action = slice(j,action_end)
+
+        action_tokens = sentence[next_action]
+
+        is_print_action = len(action_tokens) > 1 and action_tokens[1].find('print') == 0
+        is_increase_action = len(action_tokens) > 2 and action_tokens[2].find('increase') == 0
+        is_decrease_action = len(action_tokens) > 2 and action_tokens[2].find('decrease') == 0
+        is_assign_action = len(action_tokens) > 2 and action_tokens[2].find('is') == 0
+        is_return_action = len(action_tokens) > 1 and action_tokens[0].find('return') == 0
+        is_call_action = len(action_tokens) > 1 and action_tokens[1].find('use') == 0
+
+        if is_print_action:
+            actions.append(
+                ('print', action_tokens[2:])
+            )
+        elif is_increase_action:
+            actions.append(
+                ('increase', [action_tokens[1]] + action_tokens[4:])
+            )
+        elif is_decrease_action:
+            actions.append(
+                ('decrease', [action_tokens[1]] + action_tokens[4:])
+            )
+        elif is_assign_action:
+            actions.append(
+                ('assign', [action_tokens[1]] + action_tokens[3:])
+            )
+        elif is_return_action:
+            actions.append(
+                ('return', action_tokens[1:])
+            )
+        elif is_call_action:
+            actions.append(
+                ('call', action_tokens[2:])
+            )
+
+        if action_end is None:
+            break
+
+        j = action_end + 1
+
+    method_actions[method_name] = actions
+
+#+END_SRC
 
 *** =tokenize_words(self, string)=
 Wrapper around =nltk='s =word_tokenize=.
@@ -315,7 +474,7 @@ def part_of_speech_tag(self, tokens):
     return nltk.pos_tag(tokens)
 #+END_SRC
 
-*** =produce_class_code(self, class_metadata)=
+*** COMMENT =produce_class_code(self, class_metadata)=
 This method produces the code for a class represented by a dictionary
 of class attributes and methods given as the =class_metadata=
 parameter.
@@ -324,12 +483,136 @@ parameter.
 #+BEGIN_SRC python :noweb yes
 def produce_class_code(self, class_metadata):
     '''
+    Usage:
+    >>> paragraph = """
+    ... A dog is a Class.
+    ... He has mood = "HAPPY", energy = 100, x = 0, y = 0 .
+    ... He can Bark, Run, MoveLeft, MoveRight, MoveForward, Lay and
+    ... Check.
+    ... To Run he used MoveForward(2), his energy decreases in 1,
+    ... his mood is "PLAY" and return 0, end.
+    ... To MoveForward he needs numbersSteps, his y increases in
+    ... numbersSteps, his mood is "MOVING", his energy decreases by 1, end.
+    ... To MoveLeft he needs numbersSteps, his x decreases in
+    ... numbersSteps, his mood is "MOVING", his energy decreases by 1, end.
+    ... To MoveRight he needs numbersSteps, his x increases in numbersSteps,
+    ... his mood is "MOVING", his energy decreases by 1, end.
+    ... To Bark he print "barf", his energy decreases in 1, his mood is
+    ... "BARKING", end.
+    ... To Lay he print "relax", he print "move the
+    ... Booty", his energy increases in 3, end.
+    ... To Check he print "mood: " + self.mood, he print "energy: " +
+    ... str(self.energy), print "Position" + str(self.coordinatePosition), end.
+    ... """
+    >>> transpiler = Transpiler()
+    >>> class_metadata = transpiler.parse_class_paragraph(paragraph)
+    >>> code = transpiler.produce_class_code(class_metadata)
+    >>> print(code)
+    class Dog:
+        mood = "happy"
+        energy = 100
+        x = 0
+        y = 0
+    <BLANKLINE>
+        def bark(self):
+            print(`` barf '')
+            self.energy -= 1
+            self.mood = '' barking ''
+    <BLANKLINE>
+        def run(self):
+            self.moveforward ( 2 )
+            self.energy -= 1
+            self.mood = `` play ''
+            return 0
+    <BLANKLINE>
+        def moveleft(self, numberssteps):
+            self.x -= numberssteps
+            self.mood = `` moving ''
+            self.energy -= 1
+    <BLANKLINE>
+        def moveright(self, numberssteps):
+            self.x += numberssteps
+            self.mood = `` moving ''
+            self.energy -= 1
+    <BLANKLINE>
+        def moveforward(self, numberssteps):
+            self.y += numberssteps
+            self.mood = `` moving ''
+            self.energy -= 1
+    <BLANKLINE>
+        def lay(self):
+            print(`` relax '')
+            print(`` move the booty '')
+            self.energy += 3
+    <BLANKLINE>
+        def check(self):
+            print(`` mood : `` + self.mood)
+            print(`` energy : `` + str ( self.energy ))
+    <BLANKLINE>
+    <BLANKLINE>
     '''
-    print('class {name}:'.format(**class_metadata))
-    for name, value in class_metadata['attributes'].items():
-        print_value=value
-        if isinstance(value, str):
-            print_value = '"{value}"'.format(value=value)
-        print('    {name} = {value}'.format(name=name, value=print_value))
+    class_code_str = ''
+    # Use string.capwords to follow python class naming convetion
+    class_code_str += 'class {}:'.format(
+        string.capwords(class_metadata['class_name']))
+    class_code_str += '\n'
+
+    for name, value in class_metadata['property_names_and_defaults']:
+        class_code_str += '    {name} = {value}'.format(name=name, value=value)
+        class_code_str += '\n'
+
+    class_code_str += '\n'
+
+    for method_name in class_metadata['method_names']:
+        param_name = class_metadata['method_params'].get(method_name)
+        if param_name:
+            class_code_str += '    def {method_name}(self, {param_name}):\n'.format(
+                method_name=method_name, param_name=param_name)
+            pass
+        else:
+            class_code_str += '    def {method_name}(self):\n'.format(
+                method_name=method_name)
+
+        for action in class_metadata['method_actions'].get(method_name, []):
+            action_name, action_value = action[0], action[1]
+
+            if action_name == 'print':
+                print_value = ' '.join(action_value)
+                class_code_str += '        print({})\n'.format(print_value)
+            elif action_name == 'increase':
+                var = action_value[0]
+                amount = ' '.join(action_value[1:])
+                class_code_str += '        self.{var} += {amount}\n'.format(
+                    var=var, amount=amount
+                )
+            elif action_name == 'decrease':
+                var = action_value[0]
+                amount = ' '.join(action_value[1:])
+                class_code_str += '        self.{var} -= {amount}\n'.format(
+                    var=var, amount=amount
+                )
+            elif action_name == 'assign':
+                var = action_value[0]
+                value = ' '.join(action_value[1:])
+                class_code_str += '        self.{var} = {value}\n'.format(
+                    var=var, value=value
+                )
+            elif action_name == 'return':
+                return_value = ' '.join(action_value)
+                class_code_str += '        return {return_value}\n'.format(
+                    return_value=return_value
+                )
+            elif action_name == 'call':
+                class_code_str += '        self.{}\n'.format(' '.join(action_value))
+
+        class_code_str += '\n'
+
+    return class_code_str
 
 #+END_SRC
+
+* Lessons learned
+** Delimiting is hard
+
+** Can't rely just on noun/verbs
+Things like moveLeft are not identified as a verb
